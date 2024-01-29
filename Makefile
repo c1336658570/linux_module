@@ -1,4 +1,4 @@
-obj-m := kernel_module.o hds.o
+obj-m := kernel_module.o hds.o hello.o
 
 KERNELBUILD := /lib/modules/$(shell uname -r)/build
 

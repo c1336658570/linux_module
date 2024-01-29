@@ -1,5 +1,7 @@
 // make
-// sudo lsmod
+// sudo lsmod   # 查看已经安装的内核模块
+// cat /proc/modules  # 功能和上面命令相同
+// ls /sys/module     # 功能和上面相同
 // sudo insmod kernel_module.ko
 // sudo dmesg
 // sudo rmmod kernel_module.ko
