@@ -60,6 +60,7 @@
     "*.ld": "c",
     "module.h": "c",
     "sched.h": "c",
-    "kernel.h": "c"
+    "kernel.h": "c",
+    "BKL.C": "cpp"
   }
 }
