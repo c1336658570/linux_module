@@ -2,7 +2,8 @@ obj-m := kernel_module.o hds.o hello.o kfifo.o \
 livepatch-sample.o livepatch-callbacks-busymod.o \
 livepatch-callbacks-demo.o livepatch-callbacks-mod.o \
 livepatch-shadow-fix1.o livepatch-shadow-fix2.o \
-livepatch-shadow-mod.o kobject_test.o kobject-example.o
+livepatch-shadow-mod.o kobject_test.o kobject-example.o \
+kset-example.o
 
 KERNELBUILD := /lib/modules/$(shell uname -r)/build
 
