@@ -1,7 +1,7 @@
 // make
-// sudo lsmod   # 查看已经安装的内核模块
-// cat /proc/modules  # 功能和上面命令相同
-// ls /sys/module     # 功能和上面相同
+// sudo lsmod   # 查看已经安�?�的内核模块
+// cat /proc/modules  # 功能和上面命令相�?
+// ls /sys/module     # 功能和上面相�?
 // sudo insmod kernel_module.ko
 // sudo dmesg
 // sudo rmmod kernel_module.ko
@@ -15,9 +15,9 @@
 #include <linux/pid.h>
 
 static int kernel_module_init(void) {
-  printk("kernel_module_init\n");
-
   struct task_struct *task;
+
+  printk("kernel_module_init\n");
 
   for_each_process(task) {
     printk("name: %s, pid: %d", task->comm, task->pid);
