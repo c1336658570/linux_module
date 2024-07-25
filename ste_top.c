@@ -21,8 +21,15 @@
 #include <linux/sched/debug.h>
 #include <linux/swap.h>
 #include <linux/vmstat.h>
+#include <linux/proc_fs.h>
+#include <linux/seq_file.h>
+#include <linux/uaccess.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,6,0)
 #include <linux/time_namespace.h>
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,6,0)
+#define PROC_OPS_USE_FILE_OPERATIONS
 #endif
 
 MODULE_LICENSE("GPL");
@@ -180,7 +187,11 @@ static void show(void)
 	pr_info
 	    ("  PID    UID   PR   NI     VIRT     RES     SHR S    %%CPU    %%MEM   COMMAND\n");
 	for (i = 0; i < total; ++i) {
-		pr_info("%5d %5u %5d %4d %8lu %7lu %7lu %c %5llu.%1llu %5ld.%1ld   %s\n", process_info[i]->pid, process_info[i]->uid, process_info[i]->priority, process_info[i]->nice, process_info[i]->virtual_mem, process_info[i]->resident, process_info[i]->shared_mem, process_info[i]->state_c, process_info[i]->per_cpu_time * 1000 / et / 10 > 100 ? 100 : process_info[i]->per_cpu_time * 1000 / et / 10, process_info[i]->per_cpu_time * 1000 / et / 10 > 100 ? 0 : process_info[i]->per_cpu_time * 1000 / et % 10,	// CPU percentage
+		pr_info("%5d %5u %5d %4d %8lu %7lu %7lu %c %5llu.%1llu %5ld.%1ld   %s\n", process_info[i]->pid, 
+			process_info[i]->uid, process_info[i]->priority, process_info[i]->nice, process_info[i]->virtual_mem, 
+			process_info[i]->resident, process_info[i]->shared_mem, process_info[i]->state_c, 
+			process_info[i]->per_cpu_time * 1000 / et / 10 >= 100 ? 100 : process_info[i]->per_cpu_time * 1000 / et / 10, 
+			process_info[i]->per_cpu_time * 1000 / et / 10 >= 100 ? 0 : process_info[i]->per_cpu_time * 1000 / et % 10,	// CPU percentage
 			process_info[i]->resident * 1000 / kb_mem_total / 10, process_info[i]->resident * 1000 / kb_mem_total % 10,	// MEM percentage
 			process_info[i]->comm);
 	}
@@ -343,12 +354,58 @@ static void frame_make(void)
 	show();
 }
 
+#ifdef PROC_OPS_USE_FILE_OPERATIONS
+static ssize_t my_write(struct file *file, const char __user *buffer, size_t count, loff_t *pos) {
+#else
+static ssize_t my_write(struct proc_dir_entry *proc, const char __user *buffer, size_t count, loff_t *pos) {
+#endif
+    char *msg = kmalloc(count + 1, GFP_KERNEL);
+    if (!msg)
+        return -ENOMEM;
+
+    if (copy_from_user(msg, buffer, count)) {
+        kfree(msg);
+        return -EFAULT;
+    }
+
+    msg[count] = '\0';
+    kfree(msg);
+    frame_make();
+    return count;
+}
+
+static int proc_show(struct seq_file *m, void *v) {
+    // seq_printf(m, "Example output\n");
+    return 0;
+}
+
+static int my_open(struct inode *inode, struct file *file) {
+    return single_open(file, proc_show, NULL);
+}
+
+
+#ifdef PROC_OPS_USE_FILE_OPERATIONS
+static const struct file_operations proc_fops = {
+    .write = my_write,
+    .read = seq_read,
+    .open = my_open,
+    .release = single_release,
+};
+#else
+static const struct proc_ops proc_fops = {
+    .proc_write = my_write,
+    .proc_read = seq_read,
+    .proc_open = my_open,
+    .proc_release = single_release,
+};
+#endif
+
 static int __init proc_stats_init(void)
 {
 	hash_init(hash_table_old);
 	hash_init(hash_table_new);
 
-	frame_make();
+	proc_create("kernel_top", 0666, NULL, &proc_fops);
 
 	return 0;
 }
@@ -369,6 +426,7 @@ static void __exit proc_stats_exit(void)
 		}
 	}
 	kfree(process_info);
+	remove_proc_entry("kernel_top", NULL);
 }
 
 module_init(proc_stats_init);

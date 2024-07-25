@@ -66,6 +66,8 @@
     "stdlib.h": "c",
     "random": "c",
     "limits": "c",
-    "algorithm": "c"
+    "algorithm": "c",
+    "memory": "c",
+    "fstream": "c"
   }
 }
