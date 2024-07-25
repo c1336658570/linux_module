@@ -50,6 +50,7 @@ static int kobject_test_init(void)
 	ret = kobject_init_and_add(&kobj, &test_ktype, pkobj, "%s", "456_test"); // 初始化并添加一个名为456_test的子kobject
 
 	ret = sysfs_create_file(&kobj, &test_attr); // 在456_test目录下创建一个名为test的属性文件
+	ret = sysfs_create_file(pkobj, &test_attr); // 在456_test目录下创建一个名为test的属性文件
 	return ret; // 返回操作结果
 }
 

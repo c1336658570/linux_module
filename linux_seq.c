@@ -5,7 +5,7 @@
 #include <linux/seq_file.h>
 #include <linux/percpu.h>
 #include <linux/init.h>
-#include <linux/sched.h>
+#include <linux/sched.h> 
 // #include <linux/sched/signal.h>
 
 static struct proc_dir_entry *entry;
@@ -86,7 +86,8 @@ static int exam_seq_open(struct inode *inode, struct file *file)
   return seq_open(file, &exam_seq_op);
 }
 
-// 5.6之前
+// 从Linux内核版本5.6开始，proc_create函数的接口已经从使用file_operations
+// 结构改为使用新的proc_ops结构，以提供对/proc文件系统条目的操作。
 static struct file_operations exam_seq_fops = {
     .open = exam_seq_open,
     .read = seq_read,
@@ -94,19 +95,17 @@ static struct file_operations exam_seq_fops = {
     .release = seq_release,
 };
 
-// 5.6之后使用
 static const struct proc_ops exam_proc_ops = {
     .proc_open = exam_seq_open,
     .proc_read = seq_read,
     .proc_lseek = seq_lseek,
-    .proc_release = seq_release,
+    .proc_release = single_release,
 };
 
 static int __init exam_seq_init(void)
 {
 
   //    entry = create_proc_entry("exam_esq_file", 0, NULL);
-  // entry = proc_create("exam_esq_file", 0444, NULL, &exam_seq_fops);
   entry = proc_create("exam_esq_file", 0444, NULL, &exam_proc_ops);
   if (!entry)
     printk(KERN_EMERG "proc_create error.\n");

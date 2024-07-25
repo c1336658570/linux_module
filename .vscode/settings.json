@@ -61,6 +61,11 @@
     "module.h": "c",
     "sched.h": "c",
     "kernel.h": "c",
-    "BKL.C": "cpp"
+    "BKL.C": "cpp",
+    "fs.h": "c",
+    "stdlib.h": "c",
+    "random": "c",
+    "limits": "c",
+    "algorithm": "c"
   }
 }
