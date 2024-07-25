@@ -18,6 +18,9 @@
 #include <linux/sched/prio.h>
 #include <linux/types.h>
 #include <linux/sort.h>
+#include <linux/sched/debug.h>
+#include <linux/swap.h>
+#include <linux/vmstat.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,6,0)
 #include <linux/time_namespace.h>
 #endif
@@ -28,7 +31,6 @@ MODULE_LICENSE("GPL");
 #define NSEC_PER_SEC	1000000000L
 #endif
 
-// 定义哈希表
 DEFINE_HASHTABLE(hash_table_old, 10);	// 2^10 buckets
 DEFINE_HASHTABLE(hash_table_new, 10);
 
@@ -81,7 +83,7 @@ static void update_cpu_times(void)
 {
 	int cpu;
 	struct kernel_cpustat kstat;
-	
+
 	old_all_cpu_time = new_all_cpu_time;
 	memset(&new_all_cpu_time, 0, sizeof(new_all_cpu_time));
 	for_each_online_cpu(cpu) {
@@ -97,7 +99,8 @@ static void update_cpu_times(void)
 	}
 }
 
-static void print_cpu_usage_statistics(void) {
+static void print_cpu_usage_statistics(void)
+{
 	unsigned long diff_user, diff_system, diff_nice, diff_idle, diff_iowait,
 	    diff_irq, diff_softirq, diff_steal;
 	unsigned long total_diff, total_active_usage;
@@ -148,52 +151,37 @@ static void ste_mem_usage(void)
 	long cached, sreclaimable;
 
 	si_meminfo(&si);
-	// cached =
-	//     global_node_page_state(NR_FILE_PAGES) - total_swapcache_pages() -
-	//     si.bufferram;
-	// sreclaimable = global_node_page_state(NR_SLAB_RECLAIMABLE);
+	cached =
+	    global_node_page_state(NR_FILE_PAGES) - total_swapcache_pages() -
+	    si.bufferram;
+	sreclaimable = global_node_page_state(NR_SLAB_RECLAIMABLE);
 	kb_mem_total = si.totalram * si.mem_unit / 1024;
-	// pr_info
-	//     ("ste_top: MiB Mem: total: %lu MB, free: %lu MB, buffer/cache: %lu MB\n",
-	//      si.totalram * si.mem_unit / 1024 / 1024,
-	//      si.freeram * si.mem_unit / 1024 / 1024,
-	//      (si.bufferram + cached +
-	//       sreclaimable) * si.mem_unit / 1024 / 1024);
+	pr_info
+	    ("ste_top: MiB Mem: total: %lu MB, free: %lu MB, buffer/cache: %lu MB\n",
+	     si.totalram * si.mem_unit / 1024 / 1024,
+	     si.freeram * si.mem_unit / 1024 / 1024,
+	     (si.bufferram + cached +
+	      sreclaimable) * si.mem_unit / 1024 / 1024);
 
-	// si_swapinfo(&si);
-	// pr_info("ste_top: MiB Swap: total: %lu MB, free: %lu MB\n",
-	//      si.totalswap * si.mem_unit / 1024 / 1024, si.freeswap * si.mem_unit / 1024 / 1024);
+	si_swapinfo(&si);
+	pr_info("ste_top: MiB Swap: total: %lu MB, free: %lu MB\n",
+	     si.totalswap * si.mem_unit / 1024 / 1024, si.freeswap * si.mem_unit / 1024 / 1024);
 }
 
-// 交换哈希表并计算结果
 static void show(void)
 {
-	/*
-	   int i;
-	   for (i = 0; i < total; ++i) {
-	   pr_info("PID: %d, UID: %u, PR: %d, NI: %d, VIRT: %lu KB, RES: %lu KB, SHR: %lu KB, S: %c, %%CPU: %llu, %%MEM: %ld, TIME+: %llu, CMD: %s\n",
-	   process_info[i]->pid, process_info[i]->uid, process_info[i]->priority, process_info[i]->nice,
-	   process_info[i]->virtual_mem, process_info[i]->resident, process_info[i]->shared_mem, 
-	   process_info[i]->state_c, process_info[i]->per_cpu_time * 100 / et, process_info[i]->resident * 100 / kb_mem_total,
-	   process_info[i]->utime + process_info[i]->stime, process_info[i]->comm);
-	   }
-	 */
 	int i;
-	
-	print_cpu_usage_statistics();
+
 	pr_info
-	    ("  PID    UID   PR   NI     VIRT     RES     SHR S    %%CPU     %%MEM           TIME+ COMMAND\n");
+	    ("ste_top: Tasks: %d total, %d running, %d sleeping, %d stopped, %d zombie\n",
+	     total, running, sleeping, stopped, zombie);
+	print_cpu_usage_statistics();
+	ste_mem_usage();
+	pr_info
+	    ("  PID    UID   PR   NI     VIRT     RES     SHR S    %%CPU    %%MEM   COMMAND\n");
 	for (i = 0; i < total; ++i) {
-		pr_info("%5d %5u %5d %4d %8lu %7lu %7lu %c %5llu.%1llu %5ld.%1ld %10llu:%02llu:%02llu %s\n", 
-			process_info[i]->pid, process_info[i]->uid, process_info[i]->priority, process_info[i]->nice, 
-			process_info[i]->virtual_mem, process_info[i]->resident, process_info[i]->shared_mem, 
-			process_info[i]->state_c, 
-			process_info[i]->per_cpu_time * 1000 / et / 10 > 100 ? 100 : process_info[i]->per_cpu_time * 1000 / et / 10, 
-			process_info[i]->per_cpu_time * 1000 / et / 10 > 100 ? 0 : process_info[i]->per_cpu_time * 1000 / et % 10,	// CPU percentage
+		pr_info("%5d %5u %5d %4d %8lu %7lu %7lu %c %5llu.%1llu %5ld.%1ld   %s\n", process_info[i]->pid, process_info[i]->uid, process_info[i]->priority, process_info[i]->nice, process_info[i]->virtual_mem, process_info[i]->resident, process_info[i]->shared_mem, process_info[i]->state_c, process_info[i]->per_cpu_time * 1000 / et / 10 > 100 ? 100 : process_info[i]->per_cpu_time * 1000 / et / 10, process_info[i]->per_cpu_time * 1000 / et / 10 > 100 ? 0 : process_info[i]->per_cpu_time * 1000 / et % 10,	// CPU percentage
 			process_info[i]->resident * 1000 / kb_mem_total / 10, process_info[i]->resident * 1000 / kb_mem_total % 10,	// MEM percentage
-			(process_info[i]->utime + process_info[i]->stime + process_info[i]->cutime + process_info[i]->cstime) / NSEC_PER_SEC / 3600,	// hours
-			((process_info[i]->utime + process_info[i]->stime + process_info[i]->cutime + process_info[i]->cstime) / NSEC_PER_SEC / 60) % 60,	// minutes
-			(process_info[i]->utime + process_info[i]->stime + process_info[i]->cutime + process_info[i]->cstime) / NSEC_PER_SEC % 60,	// seconds
 			process_info[i]->comm);
 	}
 
@@ -225,10 +213,9 @@ static void procs_hlp(struct proc_info *this)
 
 		total = running = sleeping = stopped = zombie = 0;
 
-		// 安全遍历每个桶
 		hash_for_each_safe(hash_table_old, bkt, tmp, pos, hnode) {
-			hash_del(&pos->hnode);	// 从哈希表中删除节点
-			kfree(pos);	// 释放节点占用的内存
+			hash_del(&pos->hnode);
+			kfree(pos);
 		}
 
 		// Move data from hash_table_new to hash_table_old
@@ -253,7 +240,7 @@ static void procs_hlp(struct proc_info *this)
 	if (!h)
 		return;
 	h->pid = this->pid;
-	h->cpu_time = per_cpu_time = this->utime + this->stime;	// 用户空间和内核空间的CPU时间
+	h->cpu_time = per_cpu_time = this->utime + this->stime;
 	strcpy(h->comm, this->comm);
 	hash_add(hash_table_new, &h->hnode, h->pid);
 
@@ -274,7 +261,7 @@ static void procs_refresh(void)
 	procs_hlp(NULL);
 	rcu_read_lock();
 	for_each_process(task) {
-		// const struct cred *tcred = get_task_cred(task);
+		const struct cred *tcred = get_task_cred(task);
 		if (n_alloc == total) {
 			n_alloc = 10 + ((n_alloc * 5) / 4);
 			new_process_info =
@@ -303,15 +290,19 @@ static void procs_refresh(void)
 		process_info[total]->exit_state = task->exit_state;
 		process_info[total]->utime = task->utime;
 		process_info[total]->stime = task->stime;
-		// process_info[total]->uid = tcred->uid.val;
+		process_info[total]->uid = tcred->uid.val;
 		process_info[total]->uid = 0;
 		process_info[total]->state_c = task_state_to_char(task);
 		process_info[total]->cutime = task->signal->cutime;
 		process_info[total]->cstime = task->signal->cstime;
-		// put_cred(tcred);
+		put_cred(tcred);
 		if (task->mm) {
 			process_info[total]->virtual_mem = task->mm->total_vm << (PAGE_SHIFT - 10);	// Convert pages to KB
-			process_info[total]->shared_mem = (get_mm_counter(task->mm, MM_FILEPAGES) + get_mm_counter(task->mm, MM_SHMEMPAGES)) << (PAGE_SHIFT - 10);	// Convert pages to KB
+			process_info[total]->shared_mem =
+			    (get_mm_counter(task->mm, MM_FILEPAGES) +
+			     get_mm_counter(task->mm,
+					    MM_SHMEMPAGES)) << (PAGE_SHIFT -
+								10);
 			process_info[total]->resident =
 			    (get_mm_counter(task->mm, MM_FILEPAGES) +
 			     get_mm_counter(task->mm,
@@ -328,17 +319,17 @@ static void procs_refresh(void)
 	rcu_read_unlock();
 }
 
-int compare_proc_info(const void *a, const void *b) {
-    const struct proc_info *p1 = *(const struct proc_info **)a;
-    const struct proc_info *p2 = *(const struct proc_info **)b;
-    if (p1->per_cpu_time < p2->per_cpu_time)
-        return 1;
-    else if (p1->per_cpu_time > p2->per_cpu_time)
-        return -1;
-    else
-        return 0;
+static int compare_proc_info(const void *a, const void *b)
+{
+	const struct proc_info *p1 = *(const struct proc_info **)a;
+	const struct proc_info *p2 = *(const struct proc_info **)b;
+	if (p1->per_cpu_time < p2->per_cpu_time)
+		return 1;
+	else if (p1->per_cpu_time > p2->per_cpu_time)
+		return -1;
+	else
+		return 0;
 }
-
 
 static void frame_make(void)
 {
@@ -347,7 +338,8 @@ static void frame_make(void)
 	msleep(100);
 	update_cpu_times();
 	procs_refresh();
-	sort(process_info, total, sizeof(struct proc_info *), compare_proc_info, NULL);
+	sort(process_info, total, sizeof(struct proc_info *), compare_proc_info,
+	     NULL);
 	show();
 }
 
@@ -356,7 +348,6 @@ static int __init proc_stats_init(void)
 	hash_init(hash_table_old);
 	hash_init(hash_table_new);
 
-	ste_mem_usage();
 	frame_make();
 
 	return 0;
@@ -378,7 +369,6 @@ static void __exit proc_stats_exit(void)
 		}
 	}
 	kfree(process_info);
-	pr_info("CPU usage module unloaded.\n");
 }
 
 module_init(proc_stats_init);
