@@ -24,6 +24,11 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/uaccess.h>
+#include <linux/smp.h>
+#include <linux/swap.h>
+#include <linux/compiler.h>
+#include <linux/swapfile.h>
+#include <linux/sched/cputime.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,6,0)
 #include <linux/time_namespace.h>
 #endif
@@ -65,6 +70,7 @@ struct proc_info {
 	u64 cutime;
 	u64 cstime;
 	char comm[TASK_COMM_LEN];
+	int num_threads;
 };
 
 struct all_cpu_time {
@@ -79,7 +85,7 @@ struct all_cpu_time {
 };
 
 static struct proc_info **process_info;
-static unsigned total, running, sleeping, stopped, zombie;
+static unsigned total, running, sleeping, stopped, zombie, d_process;
 static unsigned long kb_mem_total;
 static int n_alloc;
 static time64_t et;
@@ -172,26 +178,53 @@ static void ste_mem_usage(void)
 
 	si_swapinfo(&si);
 	pr_info("ste_top: MiB Swap: total: %lu MB, free: %lu MB\n",
-	     si.totalswap * si.mem_unit / 1024 / 1024, si.freeswap * si.mem_unit / 1024 / 1024);
+		si.totalswap * si.mem_unit / 1024 / 1024,
+		si.freeswap * si.mem_unit / 1024 / 1024);
+}
+
+static void print_swap_info(void)
+{
+	struct swap_info_struct *sis;
+	int type;
+
+	pr_info
+	    ("ste_top: %-40.40s %-15s %-12s %-12s %-6s\n", "Filename", "Type", "Size", "Used", "Priority");
+
+	for (type = 0; type < MAX_SWAPFILES; type++) {
+		smp_rmb();
+		sis = READ_ONCE(swap_info[type]);
+		if (!sis)
+			continue;
+
+		if (!(sis->flags & SWP_USED) || !sis->swap_map)
+			continue;
+
+		pr_info("ste_top: %-40.40s %-15s %-12u %-12u %-6d\n",
+			sis->swap_file->f_path.dentry->d_name.name,
+			(S_ISBLK(file_inode(sis->swap_file)->i_mode) ?
+			 "partition" : "file"), sis->pages << (PAGE_SHIFT - 10),
+			sis->inuse_pages << (PAGE_SHIFT - 10), sis->prio);
+	}
+
 }
 
 static void show(void)
 {
 	int i;
-
 	pr_info
-	    ("ste_top: Tasks: %d total, %d running, %d sleeping, %d stopped, %d zombie\n",
-	     total, running, sleeping, stopped, zombie);
+	    ("ste_top: Tasks: %d total, %d running, %d sleeping, %d stopped, %d zombie, %d D\n",
+	     total, running, sleeping, stopped, zombie, d_process);
 	print_cpu_usage_statistics();
 	ste_mem_usage();
+	print_swap_info();
 	pr_info
-	    ("  PID    UID   PR   NI     VIRT     RES     SHR S    %%CPU    %%MEM   COMMAND\n");
+	    ("  PID   UID    PR   NI     VIRT     RES     SHR S    %%CPU    %%MEM   COMMAND\n");
 	for (i = 0; i < total; ++i) {
-		pr_info("%5d %5u %5d %4d %8lu %7lu %7lu %c %5llu.%1llu %5ld.%1ld   %s\n", process_info[i]->pid, 
-			process_info[i]->uid, process_info[i]->priority, process_info[i]->nice, process_info[i]->virtual_mem, 
-			process_info[i]->resident, process_info[i]->shared_mem, process_info[i]->state_c, 
-			process_info[i]->per_cpu_time * 1000 / et / 10 >= 100 ? 100 : process_info[i]->per_cpu_time * 1000 / et / 10, 
-			process_info[i]->per_cpu_time * 1000 / et / 10 >= 100 ? 0 : process_info[i]->per_cpu_time * 1000 / et % 10,	// CPU percentage
+		pr_info("%5d %5u %5d %4d %8lu %7lu %7lu %c %5llu.%1llu %5ld.%1ld   %s\n", 
+			process_info[i]->pid, process_info[i]->uid, process_info[i]->priority, process_info[i]->nice, 
+			process_info[i]->virtual_mem, process_info[i]->resident, process_info[i]->shared_mem, process_info[i]->state_c, 
+			process_info[i]->per_cpu_time * 1000 / et / 10 >= 100 * process_info[i]->num_threads ? 100 * process_info[i]->num_threads : process_info[i]->per_cpu_time * 1000 / et / 10, 
+			process_info[i]->per_cpu_time * 1000 / et / 10 >= 100 * process_info[i]->num_threads ? 0 : process_info[i]->per_cpu_time * 1000 / et % 10,	// CPU percentage
 			process_info[i]->resident * 1000 / kb_mem_total / 10, process_info[i]->resident * 1000 / kb_mem_total % 10,	// MEM percentage
 			process_info[i]->comm);
 	}
@@ -222,7 +255,7 @@ static void procs_hlp(struct proc_info *this)
 			et = NSEC_PER_SEC / 100;
 		uptime_sav = uptime_cur;
 
-		total = running = sleeping = stopped = zombie = 0;
+		total = running = sleeping = stopped = zombie = d_process = 0;
 
 		hash_for_each_safe(hash_table_old, bkt, tmp, pos, hnode) {
 			hash_del(&pos->hnode);
@@ -239,7 +272,9 @@ static void procs_hlp(struct proc_info *this)
 	total++;
 	if (this->state == TASK_RUNNING) {
 		running++;
-	} else if (this->state & (TASK_UNINTERRUPTIBLE | TASK_INTERRUPTIBLE)) {
+	} else if (this->state_c == 'D') {
+		d_process++;
+	} else if (this->state & (TASK_INTERRUPTIBLE | TASK_UNINTERRUPTIBLE)) {
 		sleeping++;
 	} else if (this->exit_state == EXIT_ZOMBIE) {
 		zombie++;
@@ -299,13 +334,15 @@ static void procs_refresh(void)
 		process_info[total]->nice = task_nice(task);
 		process_info[total]->state = task->state;
 		process_info[total]->exit_state = task->exit_state;
-		process_info[total]->utime = task->utime;
-		process_info[total]->stime = task->stime;
+		// process_info[total]->utime = task->utime;
+		// process_info[total]->stime = task->stime;
+		thread_group_cputime_adjusted(task, &process_info[total]->utime, &process_info[total]->stime);
 		process_info[total]->uid = tcred->uid.val;
 		process_info[total]->uid = 0;
 		process_info[total]->state_c = task_state_to_char(task);
 		process_info[total]->cutime = task->signal->cutime;
 		process_info[total]->cstime = task->signal->cstime;
+		process_info[total]->num_threads = get_nr_threads(task);
 		put_cred(tcred);
 		if (task->mm) {
 			process_info[total]->virtual_mem = task->mm->total_vm << (PAGE_SHIFT - 10);	// Convert pages to KB
@@ -334,9 +371,10 @@ static int compare_proc_info(const void *a, const void *b)
 {
 	const struct proc_info *p1 = *(const struct proc_info **)a;
 	const struct proc_info *p2 = *(const struct proc_info **)b;
-	if (p1->per_cpu_time < p2->per_cpu_time)
+	if (p1->per_cpu_time + p1->resident < p2->per_cpu_time + p2->resident)
 		return 1;
-	else if (p1->per_cpu_time > p2->per_cpu_time)
+	else if (p1->per_cpu_time + p1->resident >
+		 p2->per_cpu_time + p2->resident)
 		return -1;
 	else
 		return 0;
@@ -355,48 +393,52 @@ static void frame_make(void)
 }
 
 #ifdef PROC_OPS_USE_FILE_OPERATIONS
-static ssize_t my_write(struct file *file, const char __user *buffer, size_t count, loff_t *pos) {
+static ssize_t my_write(struct file *file, const char __user * buffer,
+			size_t count, loff_t * pos)
+{
 #else
-static ssize_t my_write(struct proc_dir_entry *proc, const char __user *buffer, size_t count, loff_t *pos) {
+static ssize_t my_write(struct proc_dir_entry *proc, const char __user * buffer,
+			size_t count, loff_t * pos)
+{
 #endif
-    char *msg = kmalloc(count + 1, GFP_KERNEL);
-    if (!msg)
-        return -ENOMEM;
+	char *msg = kmalloc(count + 1, GFP_KERNEL);
+	if (!msg)
+		return -ENOMEM;
 
-    if (copy_from_user(msg, buffer, count)) {
-        kfree(msg);
-        return -EFAULT;
-    }
+	if (copy_from_user(msg, buffer, count)) {
+		kfree(msg);
+		return -EFAULT;
+	}
 
-    msg[count] = '\0';
-    kfree(msg);
-    frame_make();
-    return count;
+	msg[count] = '\0';
+	kfree(msg);
+	frame_make();
+	return count;
 }
 
-static int proc_show(struct seq_file *m, void *v) {
-    // seq_printf(m, "Example output\n");
-    return 0;
+static int proc_show(struct seq_file *m, void *v)
+{
+	return 0;
 }
 
-static int my_open(struct inode *inode, struct file *file) {
-    return single_open(file, proc_show, NULL);
+static int my_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, proc_show, NULL);
 }
-
 
 #ifdef PROC_OPS_USE_FILE_OPERATIONS
 static const struct file_operations proc_fops = {
-    .write = my_write,
-    .read = seq_read,
-    .open = my_open,
-    .release = single_release,
+	.write = my_write,
+	.read = seq_read,
+	.open = my_open,
+	.release = single_release,
 };
 #else
 static const struct proc_ops proc_fops = {
-    .proc_write = my_write,
-    .proc_read = seq_read,
-    .proc_open = my_open,
-    .proc_release = single_release,
+	.proc_write = my_write,
+	.proc_read = seq_read,
+	.proc_open = my_open,
+	.proc_release = single_release,
 };
 #endif
 

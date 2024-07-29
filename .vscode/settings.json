@@ -68,6 +68,14 @@
     "limits": "c",
     "algorithm": "c",
     "memory": "c",
-    "fstream": "c"
+    "fstream": "c",
+    "array": "c",
+    "functional": "c",
+    "istream": "c",
+    "ostream": "c",
+    "tuple": "c",
+    "type_traits": "c",
+    "utility": "c",
+    "typeinfo": "c"
   }
 }
